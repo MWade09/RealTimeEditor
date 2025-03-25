@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Code Editor & Preview (with Python)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #f3f4f6;
+        }
+        #toolbar {
+            background: #1f2937;
+            color: white;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        #main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        #editor-container, #preview-container {
+            flex: 1;
+            padding: 20px;
+            overflow: auto;
+            transition: flex 0.3s;
+        }
+        #editor-container {
+            background: #ffffff;
+            border-right: 1px solid #d1d5db;
+        }
+        #preview-container {
+            background: #f9fafb;
+            position: relative;
+        }
+        #code-input {
+            width: 100%;
+            height: 100%;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 10px;
+            border: none;
+            outline: none;
+            resize: none;
+            background: #f9fafb;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+        #preview-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .gradient-circle {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(79, 70, 229, 0.4) 0%, rgba(255, 255, 255, 0) 70%);
+            border-radius: 50%;
+            animation: pulse 6s infinite ease-in-out;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .gradient-circle:nth-child(2) {
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(124, 58, 237, 0.3) 0%, rgba(255, 255, 255, 0) 70%);
+            animation-delay: -3s;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.2); opacity: 0.5; }
+        }
+        .btn {
+            padding: 6px 12px;
+            background: #4b5563;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #6b7280;
+        }
+        #resizer {
+            width: 8px;
+            background: #d1d5db;
+            cursor: col-resize;
+            transition: background 0.2s;
+            margin: 0 -2px;
+            z-index: 10;
+        }
+        #resizer:hover, #resizer.active {
+            background: #9ca3af;
+            width: 8px;
+        }
+        #python-output {
+            font-family: monospace;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            white-space: pre-wrap;
+            overflow: auto;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <button class="btn" onclick="clearEditor()">Clear</button>
+        <button class="btn" onclick="loadTemplate('html')">Load HTML Template</button>
+        <button class="btn" onclick="loadTemplate('python')">Load Python Template</button>
+        <button class="btn" onclick="downloadCode()">Download</button>
+        <select id="theme" class="btn bg-gray-600" onchange="changeTheme()">
+            <option value="light">Light Theme</option>
+            <option value="dark">Dark Theme</option>
+        </select>
+        <input type="number" id="font-size" min="10" max="20" value="14" class="w-16 p-1 rounded text-black" onchange="changeFontSize()">
+        <span class="text-sm">Font Size</span>
+        <select id="language" class="btn bg-gray-600" onchange="updatePreview()">
+            <option value="html">HTML/CSS/JS</option>
+            <option value="python">Python</option>
+        </select>
+    </div>
+
+    <div id="main-container">
+        <div id="editor-container">
+            <textarea id="code-input">
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: #f0f0f0;
+        }
+        h1 {
+            color: #4f46e5;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Editor Test</h1>
+    <p>Edit me and watch the preview update!</p>
+</body>
+</html>
+            </textarea>
+        </div>
+        <div id="resizer" onmousedown="startResize(event)"></div>
+        <div id="preview-container">
+            <div class="gradient-circle top-[-100px] left-[-100px]"></div>
+            <div class="gradient-circle bottom-[-150px] right-[-150px]"></div>
+            <iframe id="preview-frame" sandbox="allow-same-origin allow-scripts"></iframe>
+            <div id="python-output" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let pyodideReady = false;
+        let pyodide;
+
+        async function loadPyodideAndRun() {
+            pyodide = await loadPyodide({
+                indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
+            });
+            // Set up stdout redirection
+            await pyodide.runPythonAsync(`
+                import sys
+                from io import StringIO
+                sys.stdout = StringIO()
+            `);
+            pyodideReady = true;
+            updatePreview(); // Refresh preview once loaded
+        }
+        loadPyodideAndRun();
+
+        const codeInput = document.getElementById('code-input');
+        const previewFrame = document.getElementById('preview-frame');
+        const pythonOutput = document.getElementById('python-output');
+        const editorContainer = document.getElementById('editor-container');
+        const previewContainer = document.getElementById('preview-container');
+        const languageSelect = document.getElementById('language');
+        const mainContainer = document.getElementById('main-container');
+
+        function updatePreview() {
+            const code = codeInput.value.trim();
+            const language = languageSelect.value;
+
+            if (language === 'html') {
+                previewFrame.style.display = 'block';
+                pythonOutput.style.display = 'none';
+                const fullCode = code.startsWith('<!DOCTYPE html>') ? code : `
+                    <!DOCTYPE html>
+                    <html>
+                    <head><meta charset="UTF-8"></head>
+                    <body>${code}</body>
+                    </html>`;
+                const doc = previewFrame.contentDocument || previewFrame.contentWindow.document;
+                doc.open();
+                doc.write(fullCode);
+                doc.close();
+            } else if (language === 'python') {
+                previewFrame.style.display = 'none';
+                pythonOutput.style.display = 'block';
+                if (!pyodideReady) {
+                    pythonOutput.textContent = 'Pyodide is still loading...';
+                    return;
+                }
+                try {
+                    // Reset stdout buffer
+                    pyodide.runPython('sys.stdout = StringIO()');
+                    // Run the code
+                    pyodide.runPython(code);
+                    // Get the output
+                    const output = pyodide.runPython('sys.stdout.getvalue()');
+                    pythonOutput.textContent = output || 'No output';
+                } catch (err) {
+                    pythonOutput.textContent = `Error: ${err.message}`;
+                }
+            }
+        }
+
+        // Initial load
+        updatePreview();
+
+        let timeout;
+        codeInput.addEventListener('input', () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(updatePreview, 300);
+        });
+
+        function clearEditor() {
+            codeInput.value = '';
+            updatePreview();
+        }
+
+        function loadTemplate(type) {
+            if (type === 'html') {
+                codeInput.value = `<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; }
+        .hero { background: #4f46e5; color: white; padding: 50px; text-align: center; }
+        .btn { background: white; color: #4f46e5; padding: 10px 20px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>Welcome to Your Template</h1>
+        <button class="btn">Click Me</button>
+    </div>
+</body>
+</html>`;
+                languageSelect.value = 'html';
+            } else if (type === 'python') {
+                codeInput.value = `print("Hello from Python!")
+for i in range(5):
+    print(f"Count: {i}")`;
+                languageSelect.value = 'python';
+            }
+            updatePreview();
+        }
+
+        function downloadCode() {
+            const blob = new Blob([codeInput.value], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = languageSelect.value === 'html' ? 'code.html' : 'code.py';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function changeTheme() {
+            const theme = document.getElementById('theme').value;
+            if (theme === 'dark') {
+                codeInput.style.background = '#1f2937';
+                codeInput.style.color = '#ffffff';
+                editorContainer.style.background = '#374151';
+            } else {
+                codeInput.style.background = '#f9fafb';
+                codeInput.style.color = '#000000';
+                editorContainer.style.background = '#ffffff';
+            }
+        }
+
+        function changeFontSize() {
+            const size = document.getElementById('font-size').value;
+            codeInput.style.fontSize = `${size}px`;
+        }
+
+        function startResize(event) {
+            event.preventDefault();
+            document.body.style.cursor = 'col-resize';
+            document.getElementById('resizer').classList.add('active');
+            document.addEventListener('mousemove', resize);
+            document.addEventListener('mouseup', stopResize);
+        }
+
+        function resize(event) {
+            const totalWidth = mainContainer.clientWidth;
+            let editorWidth = event.clientX;
+            
+            // Add minimum width constraints (20% of total width)
+            const minWidth = totalWidth * 0.2;
+            editorWidth = Math.max(minWidth, Math.min(editorWidth, totalWidth - minWidth));
+            
+            // Convert to percentage
+            const editorPercent = (editorWidth / totalWidth) * 100;
+            const previewPercent = 100 - editorPercent;
+            
+            editorContainer.style.flex = `0 0 ${editorPercent}%`;
+            previewContainer.style.flex = `0 0 ${previewPercent}%`;
+        }
+
+        function stopResize() {
+            document.body.style.cursor = 'default';
+            document.getElementById('resizer').classList.remove('active');
+            document.removeEventListener('mousemove', resize);
+            document.removeEventListener('mouseup', stopResize);
+        }
+    </script>
+</body>
+</html>
