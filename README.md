@@ -1,5 +1,7 @@
 # Live Code Editor & Preview
 
+![image](ReadMe.PNG) 
+
 A web-based code editor with live preview capabilities, supporting HTML/CSS/JavaScript and Python. Built with a sleek, modern interface using Tailwind CSS and powered by Pyodide for Python execution in the browser.
 
 ## Features
@@ -23,7 +25,7 @@ A web-based code editor with live preview capabilities, supporting HTML/CSS/Java
 Try it out by opening the `index.html` file in a modern web browser (Chrome, Firefox, Edge recommended). No server setup is required—just open and start coding!
 
 
-
+![image](ReadMe2.PNG)
 
 
 ## Usage
